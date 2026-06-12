@@ -1,0 +1,36 @@
+---
+- name: Fetch STUN monitor logs
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Fetch agent topic log
+      ansible.builtin.fetch:
+        src: /opt/stun-monitor/logs/agent_topics.jsonl
+        dest: ../run_logs/{{ inventory_hostname }}-agent_topics.jsonl
+        flat: true
+      failed_when: false
+      when: "'agents' in group_names"
+
+    - name: Fetch agent plot log
+      ansible.builtin.fetch:
+        src: /opt/stun-monitor/logs/agent_plot_values.jsonl
+        dest: ../run_logs/{{ inventory_hostname }}-agent_plot_values.jsonl
+        flat: true
+      failed_when: false
+      when: "'agents' in group_names"
+
+    - name: Fetch central topic log
+      ansible.builtin.fetch:
+        src: /opt/stun-monitor/logs/central_topics.jsonl
+        dest: ../run_logs/{{ inventory_hostname }}-central_topics.jsonl
+        flat: true
+      failed_when: false
+      when: "'central' in group_names"
+
+    - name: Fetch central plot log
+      ansible.builtin.fetch:
+        src: /opt/stun-monitor/logs/central_plot_values.jsonl
+        dest: ../run_logs/{{ inventory_hostname }}-central_plot_values.jsonl
+        flat: true
+      failed_when: false
+      when: "'central' in group_names"

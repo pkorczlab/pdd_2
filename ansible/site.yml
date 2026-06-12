@@ -1,0 +1,160 @@
+---
+- name: Configure STUN SLA monitor nodes
+  hosts: all
+  become: true
+  vars:
+    monitor_dir: /opt/stun-monitor
+    monitor_owner: "{{ ansible_user | default(ansible_user_id) }}"
+    kafka_dir: /opt/kafka
+    kafka_log_dir: /var/lib/kafka/kraft-combined-logs
+    kafka_version: "3.9.1"
+    scala_version: "2.13"
+    kafka_archive: "kafka_{{ scala_version }}-{{ kafka_version }}.tgz"
+    kafka_url: "https://archive.apache.org/dist/kafka/{{ kafka_version }}/{{ kafka_archive }}"
+    kafka_topics:
+      - stun_metrics
+      - stun_availability
+      - stun_avg_latency
+      - stun_avg_availability
+      - stun_bottom_ten_percent_latency
+      - stun_global_availability
+
+  tasks:
+    - name: Install packages used in labs
+      ansible.builtin.apt:
+        name:
+          - openjdk-21-jre-headless
+          - python3-pip
+          - python3-venv
+          - wget
+          - tar
+        state: present
+        update_cache: true
+
+    - name: Create Kafka and monitor directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ kafka_dir }}", owner: "root", mode: "0755" }
+        - { path: "{{ kafka_log_dir }}", owner: "root", mode: "0755" }
+        - { path: "{{ monitor_dir }}", owner: "{{ monitor_owner }}", mode: "0755" }
+        - { path: "{{ monitor_dir }}/logs", owner: "{{ monitor_owner }}", mode: "0755" }
+
+    - name: Download Kafka archive
+      ansible.builtin.get_url:
+        url: "{{ kafka_url }}"
+        dest: "/tmp/{{ kafka_archive }}"
+        mode: "0644"
+
+    - name: Extract Kafka
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ kafka_archive }}"
+        dest: "{{ kafka_dir }}"
+        remote_src: true
+        extra_opts:
+          - --strip-components=1
+        creates: "{{ kafka_dir }}/bin/kafka-server-start.sh"
+
+    - name: Write Kafka KRaft server.properties
+      ansible.builtin.template:
+        src: templates/server.properties.j2
+        dest: "{{ kafka_dir }}/config/kraft/server.properties"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Check if Kafka storage is formatted
+      ansible.builtin.stat:
+        path: "{{ kafka_log_dir }}/meta.properties"
+      register: kafka_meta
+
+    - name: Generate Kafka cluster id
+      ansible.builtin.command: "{{ kafka_dir }}/bin/kafka-storage.sh random-uuid"
+      register: kafka_cluster_id
+      changed_when: false
+      when: not kafka_meta.stat.exists
+
+    - name: Format Kafka storage
+      ansible.builtin.command: >
+        {{ kafka_dir }}/bin/kafka-storage.sh format
+        -t {{ kafka_cluster_id.stdout }}
+        --standalone
+        -c {{ kafka_dir }}/config/kraft/server.properties
+      when: not kafka_meta.stat.exists
+
+    - name: Stop Kafka if already running
+      ansible.builtin.command: "{{ kafka_dir }}/bin/kafka-server-stop.sh"
+      failed_when: false
+      changed_when: false
+
+    - name: Start Kafka like in the Kafka lab
+      ansible.builtin.command: >
+        {{ kafka_dir }}/bin/kafka-server-start.sh
+        -daemon
+        {{ kafka_dir }}/config/kraft/server.properties
+
+    - name: Give Kafka a moment to start
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Create Kafka topics
+      ansible.builtin.command: >
+        {{ kafka_dir }}/bin/kafka-topics.sh
+        --create
+        --if-not-exists
+        --topic {{ item }}
+        --partitions 1
+        --replication-factor 1
+        --bootstrap-server {{ internal_ip }}:9092
+      loop: "{{ kafka_topics }}"
+
+    - name: Copy monitor scripts
+      ansible.builtin.copy:
+        src: ../scripts/
+        dest: "{{ monitor_dir }}/"
+        owner: "{{ monitor_owner }}"
+        group: "{{ monitor_owner }}"
+        mode: preserve
+
+    - name: Create Python virtual environment
+      ansible.builtin.command: "python3 -m venv {{ monitor_dir }}/venv"
+      args:
+        creates: "{{ monitor_dir }}/venv/bin/python"
+      become_user: "{{ monitor_owner }}"
+
+    - name: Install Python dependencies for monitoring
+      ansible.builtin.command: >
+        {{ monitor_dir }}/venv/bin/pip install
+        -r {{ monitor_dir }}/requirements-monitor.txt
+      become_user: "{{ monitor_owner }}"
+
+    - name: Write agent runner
+      ansible.builtin.template:
+        src: templates/run_agent.sh.j2
+        dest: "{{ monitor_dir }}/run_agent.sh"
+        owner: "{{ monitor_owner }}"
+        group: "{{ monitor_owner }}"
+        mode: "0755"
+      when: "'agents' in group_names"
+
+    - name: Write central agent config
+      ansible.builtin.template:
+        src: templates/agent_nodes.json.j2
+        dest: "{{ monitor_dir }}/agent_nodes.json"
+        owner: "{{ monitor_owner }}"
+        group: "{{ monitor_owner }}"
+        mode: "0644"
+      when: "'central' in group_names"
+
+    - name: Write central runner
+      ansible.builtin.template:
+        src: templates/run_central.sh.j2
+        dest: "{{ monitor_dir }}/run_central.sh"
+        owner: "{{ monitor_owner }}"
+        group: "{{ monitor_owner }}"
+        mode: "0755"
+      when: "'central' in group_names"

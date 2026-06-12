@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd /opt/stun-monitor
+mkdir -p logs
+nohup ./venv/bin/python agent.py \
+  --node-name {{ node_name }} \
+  --bootstrap-server {{ internal_ip }}:9092 \
+  --log-dir logs \
+  > logs/agent.out 2>&1 &
+echo $! > logs/agent.pid
+echo "agent started with pid $(cat logs/agent.pid)"

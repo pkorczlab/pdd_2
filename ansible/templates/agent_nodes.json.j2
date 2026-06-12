@@ -1,0 +1,8 @@
+[
+{% for host in groups['agents'] %}
+  {
+    "node": "{{ hostvars[host].node_name }}",
+    "bootstrap_server": "{{ hostvars[host].internal_ip }}:9092"
+  }{% if not loop.last %},{% endif %}
+{% endfor %}
+]

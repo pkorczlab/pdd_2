@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd /opt/stun-monitor
+mkdir -p logs
+nohup ./venv/bin/python central.py \
+  --node-name {{ node_name }} \
+  --local-bootstrap {{ internal_ip }}:9092 \
+  --agents-config agent_nodes.json \
+  --log-dir logs \
+  > logs/central.out 2>&1 &
+echo $! > logs/central.pid
+echo "central started with pid $(cat logs/central.pid)"
